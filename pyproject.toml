@@ -88,6 +88,7 @@ dev = [
   "mypy>=1.15.0",
   "pyink>=24.10.0",
   "pylint>=2.6.0",
+  "ruff>=0.1.0",
   # go/keep-sorted end
 ]
 
