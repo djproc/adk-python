@@ -298,14 +298,31 @@ class Gemini(BaseLlm):
     Returns:
       The api client.
     """
+    import os
+
     from google.genai import Client
 
-    return Client(
-        http_options=types.HttpOptions(
-            headers=self._tracking_headers(),
-            retry_options=self.retry_options,
-        )
-    )
+    api_key = os.getenv('GOOGLE_API_KEY')
+    project = os.getenv('GOOGLE_CLOUD_PROJECT')
+    location = os.getenv('GOOGLE_CLOUD_LOCATION')
+
+    if api_key:
+      return Client(
+          api_key=api_key,
+          http_options=types.HttpOptions(
+              headers=self._tracking_headers(),
+              retry_options=self.retry_options,
+          ),
+      )
+    else:
+      return Client(
+          project=project,
+          location=location,
+          http_options=types.HttpOptions(
+              headers=self._tracking_headers(),
+              retry_options=self.retry_options,
+          ),
+      )
 
   @cached_property
   def _api_backend(self) -> GoogleLLMVariant:
