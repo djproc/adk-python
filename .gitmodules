@@ -1,0 +1,3 @@
+[submodule "blab_agents"]
+	path = blab_agents
+	url = https://github.com/djproc/blab_agents.git
