@@ -1,7 +1,7 @@
 import asyncio
-import agentneo
 from typing import AsyncGenerator, List
 
+# Import necessary ADK components
 from google.genai import types
 from google.adk.models.base_llm import BaseLlm
 from google.adk.models.llm_request import LlmRequest
@@ -9,37 +9,47 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.agents import SequentialAgent, LlmAgent
 from google.adk.runners import InMemoryRunner
 
-# --- 1. Simulation Tools ---
+# --- 1. Simulation Tools (without AgentNeo tracing) ---
 
 def mock_training_check():
     """Simulates checking if training is complete."""
+    print("[Tool:mock_training_check] Checking training status...")
     return "Training finished successfully. Artifact: model_v1.pt (12GB)"
 
 def mock_gsutil_backup(filenames: List[str], bucket: str):
     """Simulates gsutil cp with a disk space failure."""
-    print(f"\n[System] Attempting to copy {filenames} to {bucket}...")
+    print(f"\n[Tool:mock_gsutil_backup] Attempting to copy {filenames} to {bucket}...")
     for f in filenames:
         if "model" in f:
             # Simulate a disk full error during the staging phase of upload
             raise OSError(f"[Errno 28] No space left on device: '/tmp/gsutil_staging/{f}'. Upload failed.")
     return "Upload successful."
 
-# --- 2. Traced LLM ---
+# --- 2. Mock LLM (without AgentNeo tracing) ---
 
-class TracedMockLlm(BaseLlm):
+class MockLlm(BaseLlm):
     model: str = "mock-model-error-sim"
 
-    @agentneo.trace(name="llm_generation", input_args=["llm_request"])
     async def generate_content_async(
         self, llm_request: LlmRequest, stream: bool = False
     ) -> AsyncGenerator[LlmResponse, None]:
         
-        # Simple context extraction
         full_context = ""
+        # Extract system instruction
+        if llm_request.config.system_instruction:
+            sys_inst = llm_request.config.system_instruction
+            if isinstance(sys_inst, str):
+                full_context += sys_inst + "\n"
+            elif hasattr(sys_inst, 'parts'):
+                 for part in sys_inst.parts:
+                     if part.text:
+                        full_context += part.text + "\n"
+        
+        # Extract conversation history and tool outputs
         for content in llm_request.contents:
             for part in content.parts:
                 if part.text: full_context += part.text
-                if part.function_response: full_context += str(part.function_response)
+                if part.function_response: full_context += str(part.function_response.response)
 
         response_content = None
 
@@ -69,25 +79,25 @@ class TracedMockLlm(BaseLlm):
 
         yield LlmResponse(partial=False, content=response_content)
 
-llm = TracedMockLlm()
+# --- Re-assemble Agents with Mock LLM ---
 
-# --- 3. Agents ---
+mock_llm = MockLlm()
 
 trainer = LlmAgent(
     name="trainer",
-    model=llm,
+    model=mock_llm,
     instruction="Check training status and report artifacts.",
     tools=[mock_training_check]
 )
 
 backup_ops = LlmAgent(
     name="backup_ops",
-    model=llm,
+    model=mock_llm,
     instruction="Backup the model artifacts to GCS. If it fails, report the error detail.",
     tools=[mock_gsutil_backup]
 )
 
-# --- 4. Workflow ---
+# --- 3. Workflow ---
 
 pipeline = SequentialAgent(
     name="deployment_pipeline",
@@ -95,27 +105,20 @@ pipeline = SequentialAgent(
 )
 
 async def main():
-    print("--- AgentNeo Error Handling Demo ---")
+    print("--- ADK Multi-Agent Error Handling Demo (Simplified) ---")
     print("Scenario: Training Success -> Backup OutOfDisk -> Agent Handling\n")
-    
-    # We trace the entire session
-    session = agentneo.Session(session_id="error-demo-session")
-    
+        
     runner = InMemoryRunner(agent=pipeline)
     
     try:
-        with session.trace(name="deployment_run"):
-            # Trigger the workflow
-            await runner.run_debug("Start the deployment pipeline.")
+        await runner.run_debug("Start the deployment pipeline.")
             
     except Exception as e:
-        print(f"\n[Main] Exception caught in top-level trace: {e}")
-        # AgentNeo would capture this exception in the trace visualization
+        print(f"\n[Main] Exception caught in top-level execution: {e}")
         
-    print("\n[AgentNeo] Trace finished. In the dashboard, you would see:")
-    print("1. 'trainer' span: Success.")
-    print("2. 'backup_ops' span: Tool call 'mock_gsutil_backup' throwing OSError.")
-    print("3. LLM observing the OSError in history and generating the 'CRITICAL FAILURE' response.")
+    print("\n--- Execution Complete ---")
+    print("This is the raw ADK output. To see AgentNeo tracing, you would manually instrument your LLM and tool calls with AgentNeo's Tracer API (e.g., @tracer.trace_llm, @tracer.trace_tool) and launch its dashboard.")
+    print("  AgentNeo Dashboard (if running): http://localhost:8000/ (or specified port)")
 
 if __name__ == "__main__":
     asyncio.run(main())

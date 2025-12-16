@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Vector Globe Visualization</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; color: #fff; font-family: sans-serif; }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.8);
+            padding: 10px;
+            border-radius: 5px;
+            pointer-events: none;
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border: 1px solid #444;
+            border-radius: 8px;
+        }
+        .control-group { margin-bottom: 10px; }
+        label { display: inline-block; width: 120px; font-size: 12px;}
+        input[type=range] { vertical-align: middle; }
+    </style>
+</head>
+<body>
+
+<div id="info">
+    <strong>Vector Similarity View</strong><br>
+    Rotate the globe.<br>
+    Arrows aligned with your view highlight in Orange.
+</div>
+
+<div id="controls">
+    <div class="control-group">
+        <label>Similarity Threshold</label>
+        <input type="range" id="threshold" min="0.5" max="0.99" step="0.01" value="0.85">
+    </div>
+    <div class="control-group">
+        <label>Show Boundary Box</label>
+        <input type="checkbox" id="showBox" checked>
+    </div>
+    <div class="control-group">
+        <label>Show Equator Plane</label>
+        <input type="checkbox" id="showPlane" checked>
+    </div>
+</div>
+
+<!-- Import Three.js via CDN -->
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+</script>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // --- Configuration ---
+    const CONFIG = {
+        radius: 10,
+        pointCount: 200,
+        colorBase: 0x334455,
+        colorHighlight: 0xffaa00,
+        globeColor: 0x222222,
+        axisColor: 0x444444
+    };
+
+    // --- Setup Scene ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x050505);
+    scene.fog = new THREE.FogExp2(0x050505, 0.02);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(20, 10, 20);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.5;
+
+    // --- Group holders ---
+    const globeGroup = new THREE.Group();
+    const vectorGroup = new THREE.Group();
+    const axisGroup = new THREE.Group();
+    scene.add(globeGroup);
+    scene.add(vectorGroup);
+    scene.add(axisGroup);
+
+    // --- 1. Create Globe Lines (Lat/Lon) ---
+    function createGlobeWireframe() {
+        const material = new THREE.LineBasicMaterial({ color: CONFIG.globeColor, transparent: true, opacity: 0.3 });
+        
+        // Longitude Lines (Meridians)
+        for (let i = 0; i < 12; i++) {
+            const geometry = new THREE.EllipseCurve(
+                0, 0, CONFIG.radius, CONFIG.radius, 
+                0, 2 * Math.PI, false, 0
+            );
+            const points = geometry.getPoints(64);
+            const geo = new THREE.BufferGeometry().setFromPoints(points);
+            const line = new THREE.Line(geo, material);
+            line.rotation.y = (i / 12) * Math.PI;
+            globeGroup.add(line);
+        }
+
+        // Latitude Lines (Parallels)
+        for (let i = 1; i < 10; i++) {
+            const y = Math.cos((i / 10) * Math.PI) * CONFIG.radius;
+            const r = Math.sin((i / 10) * Math.PI) * CONFIG.radius;
+            
+            const geometry = new THREE.EllipseCurve(
+                0, 0, r, r, 
+                0, 2 * Math.PI, false, 0
+            );
+            const points = geometry.getPoints(64);
+            // Rotate flat circles to lie on XZ plane at height Y
+            const geo = new THREE.BufferGeometry().setFromPoints(points).rotateX(Math.PI / 2).translate(0, y, 0);
+            const line = new THREE.Line(geo, material);
+            globeGroup.add(line);
+        }
+    }
+    createGlobeWireframe();
+
+    // --- 2. Create Vectors (Arrows) ---
+    const arrows = [];
+
+    function createVectors() {
+        const origin = new THREE.Vector3(0, 0, 0);
+        
+        for (let i = 0; i < CONFIG.pointCount; i++) {
+            // Generate random point on sphere surface
+            const dir = new THREE.Vector3(
+                Math.random() - 0.5,
+                Math.random() - 0.5,
+                Math.random() - 0.5
+            ).normalize();
+
+            // Store the direction for math later
+            const arrowLength = CONFIG.radius * 0.8; // Arrows slightly inside
+            const hex = CONFIG.colorBase;
+
+            const arrowHelper = new THREE.ArrowHelper(dir, origin, arrowLength, hex, 1, 0.5);
+            
+            // Store metadata on the object for easier retrieval
+            arrowHelper.userData = {
+                direction: dir,
+                originalLength: arrowLength
+            };
+
+            arrows.push(arrowHelper);
+            vectorGroup.add(arrowHelper);
+        }
+    }
+    createVectors();
+
+    // --- 3. Boundary Axis & Planes ---
+    let boxHelper, gridPlane;
+
+    function createBoundary() {
+        // A. Wireframe Box around the sphere
+        const boxGeo = new THREE.BoxGeometry(CONFIG.radius * 2, CONFIG.radius * 2, CONFIG.radius * 2);
+        const boxEdges = new THREE.EdgesGeometry(boxGeo);
+        boxHelper = new THREE.LineSegments(boxEdges, new THREE.LineBasicMaterial({ color: CONFIG.axisColor }));
+        axisGroup.add(boxHelper);
+
+        // B. Equatorial Grid Plane
+        gridPlane = new THREE.GridHelper(CONFIG.radius * 2, 20, 0x888888, 0x222222);
+        gridPlane.position.y = 0;
+        axisGroup.add(gridPlane);
+
+        // C. Standard XYZ Axis
+        const axesHelper = new THREE.AxesHelper(CONFIG.radius + 5);
+        axisGroup.add(axesHelper);
+    }
+    createBoundary();
+
+    // --- UI Logic ---
+    const ui = {
+        threshold: document.getElementById('threshold'),
+        showBox: document.getElementById('showBox'),
+        showPlane: document.getElementById('showPlane')
+    };
+
+    ui.showBox.addEventListener('change', (e) => {
+        boxHelper.visible = e.target.checked;
+    });
+    ui.showPlane.addEventListener('change', (e) => {
+        gridPlane.visible = e.target.checked;
+    });
+
+    // --- Interaction Logic: Vector Comparison ---
+    const cameraDir = new THREE.Vector3();
+
+    function updateHighlights() {
+        // 1. Get Camera Direction (Center - CameraPos) normalized
+        // Actually, we want the direction FROM the center TO the camera
+        // to match arrows pointing OUTWARDS.
+        cameraDir.copy(camera.position).sub(scene.position).normalize();
+
+        const threshold = parseFloat(ui.threshold.value);
+
+        arrows.forEach(arrow => {
+            // Dot Product: 1.0 = Exact match, 0.0 = 90 degrees, -1.0 = Opposite
+            const similarity = arrow.userData.direction.dot(cameraDir);
+
+            if (similarity > threshold) {
+                // Highlighting logic
+                arrow.setColor(new THREE.Color(CONFIG.colorHighlight));
+                // Scale up slightly if highlighted
+                arrow.setLength(arrow.userData.originalLength * 1.1, 1.5, 0.6);
+            } else {
+                // Dim logic
+                arrow.setColor(new THREE.Color(CONFIG.colorBase));
+                arrow.setLength(arrow.userData.originalLength, 1, 0.5);
+            }
+        });
+    }
+
+    // --- Animation Loop ---
+    function animate() {
+        requestAnimationFrame(animate);
+        
+        controls.update(); // required for damping and auto-rotation
+        
+        // Stop auto-rotate if user is interacting
+        if(controls.state !== -1) { 
+            updateHighlights();
+        } else {
+            // Even during auto-rotate, update highlights based on new camera pos
+            updateHighlights();
+        }
+
+        renderer.render(scene, camera);
+    }
+
+    // Handle Resize
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    animate();
+</script>
+</body>
+</html>
