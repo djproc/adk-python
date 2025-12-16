@@ -87,7 +87,17 @@ app = workflow.compile()
 
 async def main():
     print("--- LangGraph Error Handling Demo ---")
-    print("Scenario: Disk Corruption -> Conditional Edge -> Alert Node\n")
+    
+    try:
+        # Attempt to visualize the graph layout
+        # This acts as a CLI-based 'GUI' for the structure
+        print("\n[Graph Structure Visualization]")
+        print(app.get_graph().draw_ascii())
+    except Exception as e:
+        print(f"\n[Visualization Info] Could not draw ASCII graph: {e}")
+        print("Note: 'grandalf' or 'graphviz' packages might be required for visualization.")
+
+    print("\nScenario: Disk Corruption -> Conditional Edge -> Alert Node\n")
     
     initial_state = {
         "step": "start", 
