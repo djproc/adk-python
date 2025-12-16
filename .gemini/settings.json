@@ -1,5 +1,15 @@
 {
   "context": {
     "fileName": "AGENTS.md"
+  },
+  "mcpServers": {
+    "tmux": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "tmux-mcp",
+        "--shell-type=fish"
+      ]
+    }
   }
 }
